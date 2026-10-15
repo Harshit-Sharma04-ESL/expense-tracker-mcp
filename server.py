@@ -73,10 +73,23 @@ def _default_sqlite_path() -> Path:
         return Path(tempfile.gettempdir()) / "expenses.db"
 
 
+def _clean_database_url(raw: str) -> str:
+    """Tolerate common paste mistakes: whitespace, quotes, or a leading 'DATABASE_URL='."""
+    url = raw.strip().strip("\"'").strip()
+    if url.upper().startswith("DATABASE_URL="):
+        url = url.split("=", 1)[1].strip().strip("\"'").strip()
+    return url
+
+
 class Database:
     def __init__(self) -> None:
-        url = os.getenv("DATABASE_URL", "")
+        url = _clean_database_url(os.getenv("DATABASE_URL", ""))
         self.is_postgres = url.startswith(("postgres://", "postgresql://"))
+        if url and not self.is_postgres:
+            raise RuntimeError(
+                "DATABASE_URL is set but does not start with postgres:// or postgresql://. "
+                "Fix it or remove it to use SQLite."
+            )
         self.url = url
         self.sqlite_path = None if self.is_postgres else _default_sqlite_path()
         if self.sqlite_path:
@@ -595,7 +608,13 @@ def monthly_review(month: str | None = None) -> str:
 @mcp.tool(annotations=READ_ONLY)
 def server_info() -> dict[str, str]:
     """Show storage backend, currency and timezone in use."""
-    return {"storage": db.backend, "currency": CURRENCY, "timezone": str(TIMEZONE), "today": today().isoformat()}
+    info = {"storage": db.backend, "currency": CURRENCY, "timezone": str(TIMEZONE), "today": today().isoformat()}
+    if not db.is_postgres:
+        info["warning"] = (
+            "DATABASE_URL is not set, so data is in a local SQLite file that may be lost on restart "
+            "or redeploy. Set DATABASE_URL to a Postgres URL for permanent storage."
+        )
+    return info
 
 
 if __name__ == "__main__":
